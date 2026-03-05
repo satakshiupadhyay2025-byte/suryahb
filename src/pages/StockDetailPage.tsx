@@ -3,7 +3,8 @@ import { useApp } from '@/context/AppContext';
 import TradingChart from '@/components/TradingChart';
 import OrderPanel from '@/components/OrderPanel';
 import { TrendingUp, TrendingDown, Star, ArrowLeft } from 'lucide-react';
-import { formatLargeNumber } from '@/lib/marketData';
+import { formatCurrency } from '@/lib/marketData';
+const formatLargeNumber = formatCurrency;
 
 export default function StockDetailPage() {
   const { symbol } = useParams<{ symbol: string }>();
