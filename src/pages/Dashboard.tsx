@@ -1,11 +1,11 @@
 import { useApp } from '@/context/AppContext';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { TrendingUp, TrendingDown, ArrowRight, Star, Bell, Wallet, Eye, EyeOff, RefreshCw } from 'lucide-react';
-import { IndexCard, MiniIndexBar } from '@/components/IndexCard';
+import { TrendingUp, TrendingDown, ArrowRight, Star, Bell, Eye, EyeOff } from 'lucide-react';
+import { IndexCard } from '@/components/IndexCard';
 import { StockRow } from '@/components/StockCard';
 import MarketTicker from '@/components/MarketTicker';
-import { isMarketOpen, formatCurrency } from '@/lib/marketData';
+import { getMarketStatus, formatCurrency } from '@/lib/marketData';
 import { useState } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 
@@ -15,21 +15,18 @@ export default function Dashboard() {
   const { stocks, indices, holdings, watchlist, user, mutualFunds, fdInvestments, goldHolding, isLoggedIn } = useApp();
   const [balanceVisible, setBalanceVisible] = useState(true);
 
-  const marketOpen = isMarketOpen();
+  const marketStatus = getMarketStatus();
 
-  // Top gainers/losers
   const sorted = [...stocks].sort((a, b) => b.changePercent - a.changePercent);
   const topGainers = sorted.slice(0, 6);
   const topLosers = sorted.slice(-6).reverse();
   const trending = stocks.slice(0, 8);
 
-  // Portfolio summary
   const totalInvested = holdings.reduce((s, h) => s + h.avgPrice * h.quantity, 0);
   const totalCurrent = holdings.reduce((s, h) => s + h.currentPrice * h.quantity, 0);
   const pnl = totalCurrent - totalInvested;
   const pnlPct = totalInvested > 0 ? (pnl / totalInvested) * 100 : 0;
 
-  // Portfolio allocation
   const sectorMap: Record<string, number> = {};
   holdings.forEach(h => {
     const stock = stocks.find(s => s.symbol === h.symbol);
@@ -38,17 +35,17 @@ export default function Dashboard() {
   });
   const pieData = Object.entries(sectorMap).map(([name, value]) => ({ name, value: parseFloat(value.toFixed(0)) }));
 
-  // Total wealth
   const mfValue = mutualFunds.reduce((s, f) => s + f.units * f.nav, 0);
   const fdValue = fdInvestments.reduce((s, f) => s + f.principal, 0);
   const goldValue = goldHolding.grams * goldHolding.currentPrice;
   const totalWealth = (user?.virtualBalance || 0) + totalCurrent + mfValue + fdValue + goldValue;
-
-  // Gold price display
   const goldPrice = goldHolding.currentPrice;
 
   const now = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : 'Good Evening';
   const dateStr = now.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const firstName = user?.name?.split(' ')[0] || '';
 
   return (
     <div className="animate-fade-in">
@@ -59,13 +56,13 @@ export default function Dashboard() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold">
-              {isLoggedIn ? `Good ${now.getHours() < 12 ? 'Morning' : now.getHours() < 17 ? 'Afternoon' : 'Evening'}, {user?.name?.split(' ')[0]} 👋` : 'Markets Overview'}
+              {isLoggedIn ? `${greeting}, ${firstName} 👋` : 'Markets Overview'}
             </h1>
             <p className="text-sm text-muted-foreground">{dateStr}</p>
           </div>
-          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${marketOpen ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}>
-            <div className={`w-2 h-2 rounded-full ${marketOpen ? 'bg-gain animate-pulse' : 'bg-muted-foreground'}`} />
-            {marketOpen ? 'Market Open' : 'Market Closed'}
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${marketStatus.open ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}>
+            <div className={`w-2 h-2 rounded-full ${marketStatus.open ? 'bg-gain animate-pulse' : 'bg-muted-foreground'}`} />
+            {marketStatus.message}
           </div>
         </div>
 
@@ -104,7 +101,7 @@ export default function Dashboard() {
           </motion.div>
         )}
 
-        {/* Indices */}
+        {/* Indices - clickable */}
         <div>
           <h2 className="font-bold text-base mb-3">Market Indices</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -112,37 +109,42 @@ export default function Dashboard() {
               <IndexCard key={name} name={name} />
             ))}
           </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+            {['NIFTY IT', 'NIFTY PHARMA', 'NIFTY AUTO', 'NIFTY MIDCAP 100'].map(name => (
+              <IndexCard key={name} name={name} />
+            ))}
+          </div>
         </div>
 
         {/* Gold & Commodities */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <div className="bg-card border rounded-xl p-4 card-hover">
+          <Link to="/gold" className="bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/30 rounded-xl p-4 card-hover">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xl">🥇</span>
               <span className="font-medium text-sm">Gold (24K)</span>
             </div>
             <p className="font-bold text-lg">₹{goldPrice.toLocaleString('en-IN', { maximumFractionDigits: 0 })}/g</p>
             <p className="text-xs gain-text mt-0.5">+0.12% today</p>
-            <Link to="/gold" className="text-xs text-primary mt-2 inline-block font-medium">Buy Gold →</Link>
-          </div>
-          <div className="bg-card border rounded-xl p-4 card-hover">
+            <p className="text-xs text-primary mt-2 font-medium">Buy Gold →</p>
+          </Link>
+          <Link to="/gold" className="bg-gradient-to-br from-slate-400/20 to-slate-600/10 border border-slate-400/30 rounded-xl p-4 card-hover">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xl">🥈</span>
               <span className="font-medium text-sm">Silver (999)</span>
             </div>
-            <p className="font-bold text-lg">₹{(95.40 + Math.random() * 0.5).toFixed(2)}/g</p>
+            <p className="font-bold text-lg">₹{(95.40).toFixed(2)}/g</p>
             <p className="text-xs gain-text mt-0.5">+0.08% today</p>
-            <Link to="/gold" className="text-xs text-primary mt-2 inline-block font-medium">Buy Silver →</Link>
-          </div>
-          <div className="bg-card border rounded-xl p-4 card-hover col-span-2 md:col-span-1">
+            <p className="text-xs text-primary mt-2 font-medium">Buy Silver →</p>
+          </Link>
+          <Link to="/fd" className="bg-card border rounded-xl p-4 card-hover col-span-2 md:col-span-1">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xl">📈</span>
               <span className="font-medium text-sm">FD Rates (Best)</span>
             </div>
             <p className="font-bold text-lg">Up to 8.5% p.a.</p>
             <p className="text-xs text-muted-foreground mt-0.5">399 days tenure</p>
-            <Link to="/fd" className="text-xs text-primary mt-2 inline-block font-medium">Invest in FD →</Link>
-          </div>
+            <p className="text-xs text-primary mt-2 font-medium">Invest in FD →</p>
+          </Link>
         </div>
 
         {/* Watchlist */}
@@ -212,7 +214,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Trending */}
+        {/* Trending - clickable */}
         <div className="bg-card border rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-bold">🔥 Trending Stocks</h2>

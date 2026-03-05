@@ -132,16 +132,24 @@ interface AppContextType extends AppState {
   investMutualFund: (fund: Omit<MutualFund, 'id'>) => void;
   startSIP: (fundId: string, amount: number, date: number) => void;
   stopSIP: (fundId: string) => void;
+  redeemMutualFund: (fundId: string, units: number) => void;
   investFD: (fd: Omit<FDInvestment, 'id' | 'status'>) => void;
+  exitFD: (fdId: string) => void;
   buyGold: (grams: number, pricePerGram: number) => void;
   sellGold: (grams: number, pricePerGram: number) => void;
   applyIPO: (app: Omit<IPOApplication, 'id' | 'appliedAt' | 'allotmentStatus'>) => void;
   updateUserProfile: (data: Partial<User>) => void;
-  updateUserBalance: (amount: number) => void; // admin
+  updateUserBalance: (amount: number) => void;
+  addUserBalance: (userId: string, amount: number) => void;
   markNotificationRead: (id: string) => void;
   getStockBySymbol: (symbol: string) => Stock | undefined;
   exitPosition: (symbol: string, quantity: number) => boolean;
-  redeemMutualFund: (fundId: string, units: number) => void;
+  // Admin functions
+  adminUpdateStock: (symbol: string, updates: Partial<Stock>) => void;
+  adminDeleteUser: (userId: string) => void;
+  adminUpdateUser: (userId: string, data: Partial<User>) => void;
+  adminChangePassword: (newPassword: string) => void;
+  getAllUsers: () => { email: string; password: string; user: User }[];
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -448,6 +456,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addNotification(`FD of ₹${fd.principal.toLocaleString('en-IN')} created at ${fd.interestRate}%`, 'success');
   }, [addNotification]);
 
+  const exitFD = useCallback((fdId: string) => {
+    setState(prev => {
+      const fd = prev.fdInvestments.find(f => f.id === fdId);
+      if (!fd) return prev;
+      const elapsed = Date.now() - new Date(fd.startDate).getTime();
+      const totalDays = (new Date(fd.maturityDate).getTime() - new Date(fd.startDate).getTime()) / (1000 * 86400);
+      const elapsedDays = elapsed / (1000 * 86400);
+      const progressRatio = Math.min(1, elapsedDays / totalDays);
+      const earnedInterest = (fd.maturityAmount - fd.principal) * progressRatio;
+      const penalty = earnedInterest * 0.01; // 1% penalty
+      const returnAmount = fd.principal + earnedInterest - penalty;
+      return {
+        ...prev,
+        fdInvestments: prev.fdInvestments.filter(f => f.id !== fdId),
+        user: prev.user ? { ...prev.user, virtualBalance: prev.user.virtualBalance + returnAmount } : prev.user,
+      };
+    });
+    addNotification('FD withdrawn with early exit penalty applied', 'info');
+  }, [addNotification]);
+
   const buyGold = useCallback((grams: number, pricePerGram: number) => {
     const cost = grams * pricePerGram;
     setState(prev => {
@@ -484,16 +512,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ipoApplications: [...prev.ipoApplications, newApp],
       user: prev.user ? { ...prev.user, virtualBalance: prev.user.virtualBalance - totalCost } : prev.user,
     }));
-    // Simulate allotment after 3 seconds
     setTimeout(() => {
+      const allotted = Math.random() > 0.4;
       setState(prev => ({
         ...prev,
         ipoApplications: prev.ipoApplications.map(a => a.id === newApp.id
-          ? { ...a, allotmentStatus: Math.random() > 0.4 ? 'allotted' : 'not_allotted', allottedShares: Math.random() > 0.4 ? app.lots * app.lotSize : 0 }
+          ? { ...a, allotmentStatus: allotted ? 'allotted' : 'not_allotted', allottedShares: allotted ? app.lots * app.lotSize : 0 }
           : a
         ),
       }));
-      addNotification(`IPO allotment result for ${app.name}: ${Math.random() > 0.4 ? '✅ Allotted!' : '❌ Not Allotted'}`, 'info');
+      addNotification(`IPO allotment result for ${app.name}: ${allotted ? '✅ Allotted!' : '❌ Not Allotted - Refund processed'}`, 'info');
+      if (!allotted) {
+        setState(prev => ({
+          ...prev,
+          user: prev.user ? { ...prev.user, virtualBalance: prev.user.virtualBalance + totalCost } : prev.user,
+        }));
+      }
     }, 3000);
     addNotification(`IPO application for ${app.name} submitted`, 'success');
   }, [addNotification]);
@@ -504,6 +538,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateUserBalance = useCallback((amount: number) => {
     setState(prev => ({ ...prev, user: prev.user ? { ...prev.user, virtualBalance: amount } : prev.user }));
+  }, []);
+
+  const addUserBalance = useCallback((userId: string, amount: number) => {
+    const savedUsers = JSON.parse(localStorage.getItem('surya_users') || '[]');
+    const idx = savedUsers.findIndex((u: { user: User }) => u.user.id === userId);
+    if (idx >= 0) {
+      savedUsers[idx].user.virtualBalance = (savedUsers[idx].user.virtualBalance || 0) + amount;
+      localStorage.setItem('surya_users', JSON.stringify(savedUsers));
+    }
+    // If current user
+    setState(prev => {
+      if (prev.user?.id === userId) {
+        return { ...prev, user: { ...prev.user, virtualBalance: prev.user.virtualBalance + amount } };
+      }
+      return prev;
+    });
   }, []);
 
   const markNotificationRead = useCallback((id: string) => {
@@ -518,12 +568,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return placeOrder({ symbol, name: stock.name, type: 'sell', orderType: 'market', quantity, price: stock.price });
   }, [state.stocks, placeOrder]);
 
+  const adminUpdateStock = useCallback((symbol: string, updates: Partial<Stock>) => {
+    setState(prev => ({
+      ...prev,
+      stocks: prev.stocks.map(s => s.symbol === symbol ? { ...s, ...updates } : s),
+    }));
+  }, []);
+
+  const adminDeleteUser = useCallback((userId: string) => {
+    const savedUsers = JSON.parse(localStorage.getItem('surya_users') || '[]');
+    const updated = savedUsers.filter((u: { user: User }) => u.user.id !== userId);
+    localStorage.setItem('surya_users', JSON.stringify(updated));
+  }, []);
+
+  const adminUpdateUser = useCallback((userId: string, data: Partial<User>) => {
+    const savedUsers = JSON.parse(localStorage.getItem('surya_users') || '[]');
+    const idx = savedUsers.findIndex((u: { user: User }) => u.user.id === userId);
+    if (idx >= 0) {
+      savedUsers[idx].user = { ...savedUsers[idx].user, ...data };
+      localStorage.setItem('surya_users', JSON.stringify(savedUsers));
+    }
+  }, []);
+
+  const adminChangePassword = useCallback((newPassword: string) => {
+    localStorage.setItem('surya_admin_password', newPassword);
+  }, []);
+
+  const getAllUsers = useCallback(() => {
+    return JSON.parse(localStorage.getItem('surya_users') || '[]');
+  }, []);
+
   return (
     <AppContext.Provider value={{
       ...state,
       login, signup, logout, toggleDarkMode, placeOrder, addToWatchlist, removeFromWatchlist,
-      investMutualFund, startSIP, stopSIP, redeemMutualFund, investFD, buyGold, sellGold, applyIPO,
-      updateUserProfile, updateUserBalance, markNotificationRead, getStockBySymbol, exitPosition,
+      investMutualFund, startSIP, stopSIP, redeemMutualFund, investFD, exitFD, buyGold, sellGold, applyIPO,
+      updateUserProfile, updateUserBalance, addUserBalance, markNotificationRead, getStockBySymbol, exitPosition,
+      adminUpdateStock, adminDeleteUser, adminUpdateUser, adminChangePassword, getAllUsers,
     }}>
       {children}
     </AppContext.Provider>

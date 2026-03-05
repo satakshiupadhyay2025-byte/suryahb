@@ -23,13 +23,16 @@ export default function LoginPage() {
     await new Promise(r => setTimeout(r, 600));
     const ok = login(email, password);
     setLoading(false);
-    if (ok) navigate('/');
-    else setError('Invalid email or password. Try: rahul@example.com / password123');
+    if (ok) {
+      // Admin goes to admin panel, user goes to dashboard
+      if (email === 'suryanarayan') navigate('/admin');
+      else navigate('/');
+    } else {
+      setError('Invalid email or password. Please try again.');
+    }
   };
 
   const handleDemo = async () => {
-    setEmail('rahul@example.com');
-    setPassword('password123');
     setLoading(true);
     await new Promise(r => setTimeout(r, 400));
     login('rahul@example.com', 'password123');
@@ -51,7 +54,7 @@ export default function LoginPage() {
           <h1 className="text-4xl font-bold leading-tight">India's Best<br />Paper Trading Platform</h1>
           <p className="text-primary-foreground/80 text-lg">Practice trading with ₹10 Lakhs virtual money. Stocks, Mutual Funds, Gold, IPOs and more.</p>
           <div className="grid grid-cols-2 gap-4">
-            {[['₹10L', 'Virtual Balance'], ['50+', 'Stocks'], ['0%', 'Real Risk'], ['100%', 'Real Experience']].map(([v, l]) => (
+            {[['₹10L', 'Virtual Balance'], ['250+', 'Stocks'], ['0%', 'Real Risk'], ['100%', 'Real Experience']].map(([v, l]) => (
               <div key={l} className="bg-primary-foreground/10 rounded-xl p-4">
                 <p className="text-2xl font-bold">{v}</p>
                 <p className="text-primary-foreground/70 text-sm">{l}</p>
@@ -59,11 +62,11 @@ export default function LoginPage() {
             ))}
           </div>
         </div>
-        <p className="text-primary-foreground/50 text-sm">© 2024 Surya Stock Broker. Paper Trading Platform.</p>
+        <p className="text-primary-foreground/50 text-sm">© 2025 Surya Stock Broker. Paper Trading Platform.</p>
       </div>
 
       {/* Right panel */}
-      <div className="flex-1 flex items-center justify-center p-6">
+      <div className="flex-1 flex items-center justify-center p-6 bg-background">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -84,7 +87,7 @@ export default function LoginPage() {
               <Label>Email / Username</Label>
               <div className="relative mt-1.5">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input value={email} onChange={e => setEmail(e.target.value)} placeholder="rahul@example.com" className="pl-9" required />
+                <Input value={email} onChange={e => setEmail(e.target.value)} placeholder="Enter your email or username" className="pl-9" required />
               </div>
             </div>
             <div>
@@ -118,11 +121,6 @@ export default function LoginPage() {
           <Button variant="outline" className="w-full" onClick={handleDemo} disabled={loading}>
             🚀 Try Demo Account
           </Button>
-
-          <div className="mt-4 p-3 bg-muted/50 rounded-xl text-xs text-muted-foreground space-y-1">
-            <p><strong>Demo:</strong> rahul@example.com / password123</p>
-            <p><strong>Admin:</strong> suryanarayan / Suryanarayan@123</p>
-          </div>
 
           <p className="text-center text-sm text-muted-foreground mt-6">
             Don't have an account? <Link to="/signup" className="text-primary font-semibold hover:underline">Sign Up</Link>
