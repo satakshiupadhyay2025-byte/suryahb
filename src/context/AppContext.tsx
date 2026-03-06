@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { Stock, STOCKS_DATA, INDICES, Index, simulatePriceTick, simulateIndexTick } from '@/lib/marketData';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { Stock, STOCKS_DATA, INDICES, Index, simulatePriceTick, simulateIndexTick, RESERVE_STOCKS } from '@/lib/marketData';
 
 export interface User {
   id: string;
@@ -74,6 +74,13 @@ export interface GoldHolding {
   invested: number;
 }
 
+export interface SilverHolding {
+  grams: number;
+  avgBuyPrice: number;
+  currentPrice: number;
+  invested: number;
+}
+
 export interface BondHolding {
   id: string;
   name: string;
@@ -104,21 +111,58 @@ export interface WatchlistItem {
   addedAt: Date;
 }
 
+export interface DividendRecord {
+  id: string;
+  symbol: string;
+  name: string;
+  amount: number;
+  creditedAt: Date;
+  perShare: number;
+  shares: number;
+}
+
+export interface Notification {
+  id: string;
+  message: string;
+  type: 'success' | 'info' | 'warning';
+  timestamp: Date;
+  read: boolean;
+}
+
+// Per-user portfolio data stored separately
+export interface UserPortfolio {
+  holdings: Holding[];
+  orders: Order[];
+  mutualFunds: MutualFund[];
+  fdInvestments: FDInvestment[];
+  goldHolding: GoldHolding;
+  silverHolding: SilverHolding;
+  bondHoldings: BondHolding[];
+  ipoApplications: IPOApplication[];
+  watchlist: WatchlistItem[];
+  notifications: Notification[];
+  dividendHistory: DividendRecord[];
+  lastDividendCheck: string; // ISO date string of last quarter check
+}
+
 export interface AppState {
   user: User | null;
   isLoggedIn: boolean;
   isDarkMode: boolean;
   stocks: Stock[];
   indices: Index[];
+  // Current user portfolio (loaded from per-user storage on login)
   holdings: Holding[];
   orders: Order[];
   mutualFunds: MutualFund[];
   fdInvestments: FDInvestment[];
   goldHolding: GoldHolding;
+  silverHolding: SilverHolding;
   bondHoldings: BondHolding[];
   ipoApplications: IPOApplication[];
   watchlist: WatchlistItem[];
-  notifications: { id: string; message: string; type: 'success' | 'info' | 'warning'; timestamp: Date; read: boolean }[];
+  notifications: Notification[];
+  dividendHistory: DividendRecord[];
 }
 
 interface AppContextType extends AppState {
@@ -137,6 +181,8 @@ interface AppContextType extends AppState {
   exitFD: (fdId: string) => void;
   buyGold: (grams: number, pricePerGram: number) => void;
   sellGold: (grams: number, pricePerGram: number) => void;
+  buySilver: (grams: number, pricePerGram: number) => void;
+  sellSilver: (grams: number, pricePerGram: number) => void;
   applyIPO: (app: Omit<IPOApplication, 'id' | 'appliedAt' | 'allotmentStatus'>) => void;
   updateUserProfile: (data: Partial<User>) => void;
   updateUserBalance: (amount: number) => void;
@@ -154,122 +200,244 @@ interface AppContextType extends AppState {
 
 const AppContext = createContext<AppContextType | null>(null);
 
-const DEMO_USER: User = {
-  id: 'user_001',
-  name: 'Rahul Sharma',
-  email: 'rahul@example.com',
-  phone: '9876543210',
-  pan: 'ABCDE1234F',
-  aadhaar: '1234-5678-9012',
-  dob: '1992-05-15',
-  gender: 'male',
-  kycStatus: 'approved',
-  virtualBalance: 1000000,
-  nominee: { name: 'Priya Sharma', relation: 'Spouse', dob: '1994-08-20' },
-};
+// ===== STORAGE HELPERS =====
 
-const DEMO_HOLDINGS: Holding[] = [
-  { symbol: 'RELIANCE', name: 'Reliance Industries', quantity: 10, avgPrice: 2750, currentPrice: 2847.50, type: 'stock' },
-  { symbol: 'TCS', name: 'Tata Consultancy Services', quantity: 5, avgPrice: 3400, currentPrice: 3542.80, type: 'stock' },
-  { symbol: 'HDFCBANK', name: 'HDFC Bank', quantity: 20, avgPrice: 1590, currentPrice: 1678.45, type: 'stock' },
-  { symbol: 'INFY', name: 'Infosys', quantity: 15, avgPrice: 1420, currentPrice: 1489.20, type: 'stock' },
-  { symbol: 'WIPRO', name: 'Wipro', quantity: 30, avgPrice: 460, currentPrice: 478.30, type: 'stock' },
-];
+function getGlobalKey() { return 'surya_global_state'; }
+function getUserPortfolioKey(userId: string) { return `surya_portfolio_${userId}`; }
 
-const DEMO_MF: MutualFund[] = [
-  { id: 'mf001', name: 'Mirae Asset Large Cap Fund', category: 'Equity', subCategory: 'Large Cap', nav: 98.45, invested: 50000, units: 508.2, cagr: 14.2, sipAmount: 5000, sipDate: 5, isActive: true },
-  { id: 'mf002', name: 'Axis Midcap Fund', category: 'Equity', subCategory: 'Mid Cap', nav: 72.34, invested: 30000, units: 414.7, cagr: 18.5, sipAmount: 3000, sipDate: 10, isActive: true },
-  { id: 'mf003', name: 'HDFC Index Fund - NIFTY 50', category: 'Index', subCategory: 'Large Cap', nav: 156.78, invested: 75000, units: 478.4, cagr: 12.8, isActive: true },
-];
-
-const DEMO_FDS: FDInvestment[] = [
-  { id: 'fd001', principal: 100000, tenure: 356, tenureUnit: 'days', interestRate: 8.0, startDate: new Date('2024-01-15'), maturityDate: new Date('2025-01-06'), maturityAmount: 108000, rating: 'AAA', bank: 'HDFC Bank', status: 'active' },
-  { id: 'fd002', principal: 50000, tenure: 399, tenureUnit: 'days', interestRate: 8.5, startDate: new Date('2024-03-01'), maturityDate: new Date('2025-04-04'), maturityAmount: 54652, rating: 'AAA', bank: 'SBI', status: 'active' },
-];
-
-function loadState(): AppState {
+function saveGlobalState(state: { isDarkMode: boolean; stocks: Stock[]; indices: Index[] }) {
   try {
-    const saved = localStorage.getItem('surya_app_state');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Re-hydrate dates
-      if (parsed.orders) parsed.orders = parsed.orders.map((o: Order) => ({ ...o, timestamp: new Date(o.timestamp) }));
-      if (parsed.fdInvestments) parsed.fdInvestments = parsed.fdInvestments.map((f: FDInvestment) => ({ ...f, startDate: new Date(f.startDate), maturityDate: new Date(f.maturityDate) }));
-      if (parsed.ipoApplications) parsed.ipoApplications = parsed.ipoApplications.map((a: IPOApplication) => ({ ...a, appliedAt: new Date(a.appliedAt) }));
-      if (parsed.bondHoldings) parsed.bondHoldings = parsed.bondHoldings.map((b: BondHolding) => ({ ...b, maturityDate: new Date(b.maturityDate) }));
-      if (parsed.watchlist) parsed.watchlist = parsed.watchlist.map((w: WatchlistItem) => ({ ...w, addedAt: new Date(w.addedAt) }));
-      if (parsed.notifications) parsed.notifications = parsed.notifications.map((n: { id: string; message: string; type: 'success' | 'info' | 'warning'; timestamp: Date; read: boolean }) => ({ ...n, timestamp: new Date(n.timestamp) }));
-      return parsed;
-    }
+    localStorage.setItem(getGlobalKey(), JSON.stringify(state));
   } catch {}
-  return getInitialState();
 }
 
-function getInitialState(): AppState {
+function loadGlobalState(): { isDarkMode: boolean; stocks: Stock[]; indices: Index[] } {
+  try {
+    const saved = localStorage.getItem(getGlobalKey());
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        isDarkMode: parsed.isDarkMode ?? false,
+        stocks: parsed.stocks && parsed.stocks.length > 0 ? parsed.stocks : STOCKS_DATA,
+        indices: parsed.indices && parsed.indices.length > 0 ? parsed.indices : INDICES,
+      };
+    }
+  } catch {}
+  return { isDarkMode: false, stocks: STOCKS_DATA, indices: INDICES };
+}
+
+function hydratePortfolioDates(p: UserPortfolio): UserPortfolio {
   return {
-    user: null,
-    isLoggedIn: false,
-    isDarkMode: false,
-    stocks: STOCKS_DATA,
-    indices: INDICES,
+    ...p,
+    orders: (p.orders || []).map(o => ({ ...o, timestamp: new Date(o.timestamp) })),
+    fdInvestments: (p.fdInvestments || []).map(f => ({ ...f, startDate: new Date(f.startDate), maturityDate: new Date(f.maturityDate) })),
+    ipoApplications: (p.ipoApplications || []).map(a => ({ ...a, appliedAt: new Date(a.appliedAt) })),
+    bondHoldings: (p.bondHoldings || []).map(b => ({ ...b, maturityDate: new Date(b.maturityDate) })),
+    watchlist: (p.watchlist || []).map(w => ({ ...w, addedAt: new Date(w.addedAt) })),
+    notifications: (p.notifications || []).map(n => ({ ...n, timestamp: new Date(n.timestamp) })),
+    dividendHistory: (p.dividendHistory || []).map(d => ({ ...d, creditedAt: new Date(d.creditedAt) })),
+  };
+}
+
+function loadUserPortfolio(userId: string): UserPortfolio {
+  try {
+    const saved = localStorage.getItem(getUserPortfolioKey(userId));
+    if (saved) {
+      return hydratePortfolioDates(JSON.parse(saved));
+    }
+  } catch {}
+  return getDefaultPortfolio();
+}
+
+function saveUserPortfolio(userId: string, portfolio: UserPortfolio) {
+  try {
+    localStorage.setItem(getUserPortfolioKey(userId), JSON.stringify(portfolio));
+  } catch {}
+}
+
+function getDefaultPortfolio(): UserPortfolio {
+  return {
     holdings: [],
     orders: [],
     mutualFunds: [],
     fdInvestments: [],
     goldHolding: { grams: 0, avgBuyPrice: 0, currentPrice: 7234.50, invested: 0 },
+    silverHolding: { grams: 0, avgBuyPrice: 0, currentPrice: 95.40, invested: 0 },
     bondHoldings: [],
     ipoApplications: [],
     watchlist: [],
     notifications: [],
+    dividendHistory: [],
+    lastDividendCheck: '',
   };
 }
 
-export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AppState>(loadState);
+function getInitialAppState(): AppState {
+  const global = loadGlobalState();
+  return {
+    user: null,
+    isLoggedIn: false,
+    isDarkMode: global.isDarkMode,
+    stocks: global.stocks,
+    indices: global.indices,
+    ...getDefaultPortfolio(),
+  };
+}
 
-  // Save to localStorage on state change (debounced)
+// ===== DIVIDEND HELPERS =====
+function getCurrentQuarter(): string {
+  const now = new Date();
+  const q = Math.floor(now.getMonth() / 3) + 1;
+  return `${now.getFullYear()}-Q${q}`;
+}
+
+// ===== PROVIDER =====
+export function AppProvider({ children }: { children: React.ReactNode }) {
+  const [state, setState] = useState<AppState>(getInitialAppState);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Save global state (stocks, indices, dark mode) separately
   useEffect(() => {
-    const timer = setTimeout(() => {
-      localStorage.setItem('surya_app_state', JSON.stringify(state));
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveGlobalState({ isDarkMode: state.isDarkMode, stocks: state.stocks, indices: state.indices });
+      // Save user portfolio if logged in
+      if (state.user) {
+        const portfolio: UserPortfolio = {
+          holdings: state.holdings,
+          orders: state.orders,
+          mutualFunds: state.mutualFunds,
+          fdInvestments: state.fdInvestments,
+          goldHolding: state.goldHolding,
+          silverHolding: state.silverHolding,
+          bondHoldings: state.bondHoldings,
+          ipoApplications: state.ipoApplications,
+          watchlist: state.watchlist,
+          notifications: state.notifications,
+          dividendHistory: state.dividendHistory,
+          lastDividendCheck: state.dividendHistory.length > 0
+            ? (state as AppState & { lastDividendCheck?: string }).lastDividendCheck || ''
+            : '',
+        };
+        saveUserPortfolio(state.user.id, portfolio);
+        // Also save balance back to users list
+        const savedUsers = JSON.parse(localStorage.getItem('surya_users') || '[]');
+        const idx = savedUsers.findIndex((u: { user: User }) => u.user.id === state.user!.id);
+        if (idx >= 0) {
+          savedUsers[idx].user.virtualBalance = state.user.virtualBalance;
+          localStorage.setItem('surya_users', JSON.stringify(savedUsers));
+        }
+      }
     }, 500);
-    return () => clearTimeout(timer);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [state]);
 
   // Apply dark mode
   useEffect(() => {
-    if (state.isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    if (state.isDarkMode) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
   }, [state.isDarkMode]);
 
   // Live price simulation - tick every 1.5s
   useEffect(() => {
     const interval = setInterval(() => {
-      setState(prev => ({
-        ...prev,
-        stocks: prev.stocks.map(s => simulatePriceTick(s)),
-        indices: prev.indices.map(i => simulateIndexTick(i)),
-        goldHolding: {
-          ...prev.goldHolding,
-          currentPrice: parseFloat((prev.goldHolding.currentPrice * (1 + (Math.random() - 0.499) * 0.001)).toFixed(2)),
-        },
-      }));
+      setState(prev => {
+        // Handle delisted stocks - replace with reserve
+        const delistedSymbols: string[] = [];
+        const newStocks = prev.stocks.map(stock => {
+          const updated = simulatePriceTick(stock);
+          if (updated.isDelisted) delistedSymbols.push(stock.symbol);
+          return updated;
+        });
+
+        let finalStocks = newStocks.filter(s => !s.isDelisted);
+
+        // Add reserve stocks for each delisted company
+        if (delistedSymbols.length > 0) {
+          const existingSymbols = new Set(finalStocks.map(s => s.symbol));
+          const available = RESERVE_STOCKS.filter(r => !existingSymbols.has(r.symbol));
+          delistedSymbols.forEach((_, i) => {
+            if (available[i]) finalStocks.push(available[i]);
+          });
+        }
+
+        const newIndices = prev.indices.map(i => simulateIndexTick(i));
+        const goldTick = parseFloat((prev.goldHolding.currentPrice * (1 + (Math.random() - 0.499) * 0.001)).toFixed(2));
+        const silverTick = parseFloat((prev.silverHolding.currentPrice * (1 + (Math.random() - 0.499) * 0.0015)).toFixed(2));
+
+        return {
+          ...prev,
+          stocks: finalStocks,
+          indices: newIndices,
+          goldHolding: { ...prev.goldHolding, currentPrice: goldTick },
+          silverHolding: { ...prev.silverHolding, currentPrice: silverTick },
+          holdings: prev.holdings.map(h => {
+            const stock = finalStocks.find(s => s.symbol === h.symbol);
+            return stock ? { ...h, currentPrice: stock.price } : h;
+          }),
+        };
+      });
     }, 1500);
     return () => clearInterval(interval);
   }, []);
 
-  // Update holdings current prices
+  // Dividend quarterly check
   useEffect(() => {
-    setState(prev => ({
-      ...prev,
-      holdings: prev.holdings.map(h => {
-        const stock = prev.stocks.find(s => s.symbol === h.symbol);
-        return stock ? { ...h, currentPrice: stock.price } : h;
-      }),
-    }));
-  }, [state.stocks]);
+    if (!state.isLoggedIn || !state.user || state.holdings.length === 0) return;
+    const currentQ = getCurrentQuarter();
+    const extState = state as AppState & { lastDividendCheck?: string };
+    if (extState.lastDividendCheck === currentQ) return;
+
+    const eligible = state.holdings.filter(h => {
+      const stock = state.stocks.find(s => s.symbol === h.symbol);
+      return stock && stock.dividendYield > 0 && h.quantity > 0;
+    });
+
+    if (eligible.length === 0) return;
+
+    let totalDividend = 0;
+    const newRecords: DividendRecord[] = [];
+
+    eligible.forEach(h => {
+      const stock = state.stocks.find(s => s.symbol === h.symbol);
+      if (!stock) return;
+      // Quarterly dividend = (annual yield / 4) * current price * quantity
+      const quarterlyYieldRate = stock.dividendYield / 400;
+      const perShare = parseFloat((stock.price * quarterlyYieldRate).toFixed(2));
+      const total = parseFloat((perShare * h.quantity).toFixed(2));
+      if (total > 0) {
+        totalDividend += total;
+        newRecords.push({
+          id: `div_${Date.now()}_${stock.symbol}`,
+          symbol: stock.symbol,
+          name: h.name,
+          amount: total,
+          creditedAt: new Date(),
+          perShare,
+          shares: h.quantity,
+        });
+      }
+    });
+
+    if (totalDividend > 0) {
+      setState(prev => ({
+        ...prev,
+        user: prev.user ? { ...prev.user, virtualBalance: prev.user.virtualBalance + totalDividend } : prev.user,
+        dividendHistory: [...newRecords, ...prev.dividendHistory],
+        notifications: [
+          {
+            id: `notif_div_${Date.now()}`,
+            message: `💰 Quarterly dividends credited! ₹${totalDividend.toFixed(2)} from ${newRecords.length} stock(s) added to your balance.`,
+            type: 'success' as const,
+            timestamp: new Date(),
+            read: false,
+          },
+          ...prev.notifications.slice(0, 49),
+        ],
+        lastDividendCheck: currentQ,
+      } as AppState & { lastDividendCheck: string }));
+    }
+  }, [state.isLoggedIn, state.user?.id]);
 
   const addNotification = useCallback((message: string, type: 'success' | 'info' | 'warning') => {
     setState(prev => ({
@@ -284,38 +452,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback((email: string, password: string): boolean => {
     // Admin check
     if (email === 'suryanarayan' && password === 'Suryanarayan@123') {
-      const adminUser: User = { ...DEMO_USER, id: 'admin', name: 'Suryanarayan (Admin)', email: 'admin@suryabroker.in', kycStatus: 'approved' };
+      const adminUser: User = {
+        id: 'admin',
+        name: 'Suryanarayan (Admin)',
+        email: 'admin@suryabroker.in',
+        phone: '9999999999',
+        pan: 'ADMIN1234X',
+        aadhaar: '0000-0000-0000',
+        dob: '1990-01-01',
+        gender: 'male',
+        kycStatus: 'approved',
+        virtualBalance: 1000000,
+      };
+      const portfolio = loadUserPortfolio('admin');
       setState(prev => ({
         ...prev,
-        user: adminUser,
+        user: { ...adminUser, virtualBalance: adminUser.virtualBalance },
         isLoggedIn: true,
-        holdings: DEMO_HOLDINGS,
-        mutualFunds: DEMO_MF,
-        fdInvestments: DEMO_FDS,
-        goldHolding: { grams: 2.5, avgBuyPrice: 6800, currentPrice: 7234.50, invested: 17000 },
-        watchlist: [{ symbol: 'RELIANCE', addedAt: new Date() }, { symbol: 'TCS', addedAt: new Date() }, { symbol: 'INFY', addedAt: new Date() }, { symbol: 'ZOMATO', addedAt: new Date() }, { symbol: 'HDFCBANK', addedAt: new Date() }],
+        ...portfolio,
       }));
       return true;
     }
-    // Demo user
-    if (email === 'rahul@example.com' && password === 'password123') {
-      setState(prev => ({
-        ...prev,
-        user: DEMO_USER,
-        isLoggedIn: true,
-        holdings: DEMO_HOLDINGS,
-        mutualFunds: DEMO_MF,
-        fdInvestments: DEMO_FDS,
-        goldHolding: { grams: 2.5, avgBuyPrice: 6800, currentPrice: 7234.50, invested: 17000 },
-        watchlist: [{ symbol: 'RELIANCE', addedAt: new Date() }, { symbol: 'TCS', addedAt: new Date() }, { symbol: 'INFY', addedAt: new Date() }],
-      }));
-      return true;
-    }
+
     // Check saved users
-    const savedUsers = JSON.parse(localStorage.getItem('surya_users') || '[]');
-    const found = savedUsers.find((u: { email: string; password: string; user: User }) => u.email === email && u.password === password);
+    const savedUsers: { email: string; password: string; user: User }[] = JSON.parse(localStorage.getItem('surya_users') || '[]');
+    const found = savedUsers.find(u => u.email === email && u.password === password);
     if (found) {
-      setState(prev => ({ ...prev, user: found.user, isLoggedIn: true }));
+      const portfolio = loadUserPortfolio(found.user.id);
+      setState(prev => ({
+        ...prev,
+        user: found.user,
+        isLoggedIn: true,
+        ...portfolio,
+      }));
       return true;
     }
     return false;
@@ -337,11 +506,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const savedUsers = JSON.parse(localStorage.getItem('surya_users') || '[]');
     savedUsers.push({ email: newUser.email, password, user: newUser });
     localStorage.setItem('surya_users', JSON.stringify(savedUsers));
-    setState(prev => ({ ...prev, user: newUser, isLoggedIn: true }));
+    const portfolio = getDefaultPortfolio();
+    saveUserPortfolio(newUser.id, portfolio);
+    setState(prev => ({
+      ...prev,
+      user: newUser,
+      isLoggedIn: true,
+      ...portfolio,
+    }));
   }, []);
 
   const logout = useCallback(() => {
-    setState(prev => ({ ...getInitialState(), isDarkMode: prev.isDarkMode, stocks: prev.stocks, indices: prev.indices }));
+    // Save current user portfolio before logging out
+    setState(prev => {
+      if (prev.user) {
+        const portfolio: UserPortfolio = {
+          holdings: prev.holdings,
+          orders: prev.orders,
+          mutualFunds: prev.mutualFunds,
+          fdInvestments: prev.fdInvestments,
+          goldHolding: prev.goldHolding,
+          silverHolding: prev.silverHolding,
+          bondHoldings: prev.bondHoldings,
+          ipoApplications: prev.ipoApplications,
+          watchlist: prev.watchlist,
+          notifications: prev.notifications,
+          dividendHistory: prev.dividendHistory,
+          lastDividendCheck: (prev as AppState & { lastDividendCheck?: string }).lastDividendCheck || '',
+        };
+        saveUserPortfolio(prev.user.id, portfolio);
+      }
+      return {
+        ...getDefaultPortfolio(),
+        user: null,
+        isLoggedIn: false,
+        isDarkMode: prev.isDarkMode,
+        stocks: prev.stocks,
+        indices: prev.indices,
+      };
+    });
   }, []);
 
   const toggleDarkMode = useCallback(() => {
@@ -465,7 +668,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const elapsedDays = elapsed / (1000 * 86400);
       const progressRatio = Math.min(1, elapsedDays / totalDays);
       const earnedInterest = (fd.maturityAmount - fd.principal) * progressRatio;
-      const penalty = earnedInterest * 0.01; // 1% penalty
+      const penalty = earnedInterest * 0.01;
       const returnAmount = fd.principal + earnedInterest - penalty;
       return {
         ...prev,
@@ -502,6 +705,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
     });
     addNotification(`Sold ${grams}g gold at ₹${pricePerGram}/g`, 'success');
+  }, [addNotification]);
+
+  const buySilver = useCallback((grams: number, pricePerGram: number) => {
+    const cost = grams * pricePerGram;
+    setState(prev => {
+      if (!prev.user || prev.user.virtualBalance < cost) return prev;
+      const totalGrams = prev.silverHolding.grams + grams;
+      const totalInvested = prev.silverHolding.invested + cost;
+      return {
+        ...prev,
+        silverHolding: { ...prev.silverHolding, grams: totalGrams, avgBuyPrice: totalInvested / totalGrams, invested: totalInvested },
+        user: { ...prev.user, virtualBalance: prev.user.virtualBalance - cost },
+      };
+    });
+    addNotification(`Bought ${grams}g silver at ₹${pricePerGram}/g`, 'success');
+  }, [addNotification]);
+
+  const sellSilver = useCallback((grams: number, pricePerGram: number) => {
+    const value = grams * pricePerGram;
+    setState(prev => {
+      if (prev.silverHolding.grams < grams) return prev;
+      const newGrams = prev.silverHolding.grams - grams;
+      return {
+        ...prev,
+        silverHolding: { ...prev.silverHolding, grams: newGrams, invested: newGrams > 0 ? prev.silverHolding.invested - grams * prev.silverHolding.avgBuyPrice : 0 },
+        user: prev.user ? { ...prev.user, virtualBalance: prev.user.virtualBalance + value } : prev.user,
+      };
+    });
+    addNotification(`Sold ${grams}g silver at ₹${pricePerGram}/g`, 'success');
   }, [addNotification]);
 
   const applyIPO = useCallback((app: Omit<IPOApplication, 'id' | 'appliedAt' | 'allotmentStatus'>) => {
@@ -547,7 +779,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       savedUsers[idx].user.virtualBalance = (savedUsers[idx].user.virtualBalance || 0) + amount;
       localStorage.setItem('surya_users', JSON.stringify(savedUsers));
     }
-    // If current user
     setState(prev => {
       if (prev.user?.id === userId) {
         return { ...prev, user: { ...prev.user, virtualBalance: prev.user.virtualBalance + amount } };
@@ -579,6 +810,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const savedUsers = JSON.parse(localStorage.getItem('surya_users') || '[]');
     const updated = savedUsers.filter((u: { user: User }) => u.user.id !== userId);
     localStorage.setItem('surya_users', JSON.stringify(updated));
+    localStorage.removeItem(getUserPortfolioKey(userId));
   }, []);
 
   const adminUpdateUser = useCallback((userId: string, data: Partial<User>) => {
@@ -602,8 +834,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <AppContext.Provider value={{
       ...state,
       login, signup, logout, toggleDarkMode, placeOrder, addToWatchlist, removeFromWatchlist,
-      investMutualFund, startSIP, stopSIP, redeemMutualFund, investFD, exitFD, buyGold, sellGold, applyIPO,
-      updateUserProfile, updateUserBalance, addUserBalance, markNotificationRead, getStockBySymbol, exitPosition,
+      investMutualFund, startSIP, stopSIP, redeemMutualFund, investFD, exitFD,
+      buyGold, sellGold, buySilver, sellSilver, applyIPO,
+      updateUserProfile, updateUserBalance, addUserBalance, markNotificationRead,
+      getStockBySymbol, exitPosition,
       adminUpdateStock, adminDeleteUser, adminUpdateUser, adminChangePassword, getAllUsers,
     }}>
       {children}

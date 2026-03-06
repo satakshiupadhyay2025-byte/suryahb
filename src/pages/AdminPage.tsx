@@ -5,6 +5,8 @@ import { Shield, Users, TrendingUp, BarChart2, Lock, Edit, Trash2, Plus, Save, X
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { setMarketOverride, getMarketOverride } from '@/lib/marketData';
+import type { MarketOverride } from '@/lib/marketData';
 
 const ADMIN_LOCK_SECONDS = 30;
 
@@ -130,7 +132,7 @@ export default function AdminPage() {
     );
   }
 
-  const tabs = ['Dashboard', 'Stocks', 'Users', 'IPOs', 'FDs', 'Change Password', 'Tips'];
+  const tabs = ['Dashboard', 'Market Control', 'Stocks', 'Users', 'IPOs', 'FDs', 'Change Password', 'Tips'];
   const totalStocks = stocks.length;
   const gainers = stocks.filter(s => s.changePercent > 0).length;
   const allUsers = getAllUsers();
@@ -155,12 +157,64 @@ export default function AdminPage() {
       </div>
 
       {tab === 'Dashboard' && <AdminDashboard stocks={stocks} gainers={gainers} totalStocks={totalStocks} user={user} updateUserBalance={updateUserBalance} allUsers={allUsers} />}
+      {tab === 'Market Control' && <AdminMarketControl />}
       {tab === 'Stocks' && <AdminStocks stocks={stocks} adminUpdateStock={adminUpdateStock} />}
       {tab === 'Users' && <AdminUsers allUsers={allUsers} adminDeleteUser={adminDeleteUser} adminUpdateUser={adminUpdateUser} addUserBalance={addUserBalance} />}
       {tab === 'IPOs' && <AdminIPOs />}
       {tab === 'FDs' && <AdminFDs />}
       {tab === 'Change Password' && <AdminChangePassword adminChangePassword={adminChangePassword} />}
       {tab === 'Tips' && <AdminTips />}
+    </div>
+  );
+}
+
+function AdminMarketControl() {
+  const [override, setOverrideState] = useState<'force_open' | 'force_close' | 'default'>(() => {
+    try { return (localStorage.getItem('surya_market_override') as 'force_open' | 'force_close' | 'default') || 'default'; } catch { return 'default'; }
+  });
+  const [saved, setSaved] = useState('');
+
+  const apply = (val: 'force_open' | 'force_close' | 'default') => {
+    localStorage.setItem('surya_market_override', val);
+    setOverrideState(val);
+    setSaved(`Market set to: ${val === 'force_open' ? '🟢 Force Open' : val === 'force_close' ? '🔴 Force Closed' : '⚡ Default Schedule'}`);
+    setTimeout(() => setSaved(''), 3000);
+  };
+
+  const options = [
+    { val: 'force_open' as const, label: '🟢 Force Open Market', desc: 'Market stays open 24/7 regardless of time, weekends or holidays. All trading enabled.', color: 'bg-gain/10 border-gain/30 text-gain' },
+    { val: 'force_close' as const, label: '🔴 Force Close Market', desc: 'Market halted immediately. No price movements. No trading allowed until reopened.', color: 'bg-loss/10 border-loss/30 text-loss' },
+    { val: 'default' as const, label: '⚡ Default (Real Schedule)', desc: 'Market follows NSE hours: 9:15 AM – 3:30 PM IST, Mon–Fri. Closed on weekends & holidays.', color: 'bg-primary/10 border-primary/30 text-primary' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-card border rounded-2xl p-5">
+        <h3 className="font-bold text-lg mb-1 flex items-center gap-2">🏦 Market Control Panel</h3>
+        <p className="text-sm text-muted-foreground mb-5">Control market open/close status. Override real NSE schedule anytime.</p>
+        <div className="space-y-3">
+          {options.map(opt => (
+            <button key={opt.val} onClick={() => apply(opt.val)}
+              className={`w-full text-left p-4 rounded-2xl border-2 transition-all ${override === opt.val ? opt.color + ' border-opacity-100' : 'bg-muted/40 border-border hover:bg-muted'}`}>
+              <div className="flex items-center justify-between">
+                <p className="font-bold">{opt.label}</p>
+                {override === opt.val && <span className="text-xs font-bold px-2 py-0.5 rounded bg-card border">ACTIVE</span>}
+              </div>
+              <p className="text-xs mt-1 opacity-80">{opt.desc}</p>
+            </button>
+          ))}
+        </div>
+        {saved && <p className="mt-3 text-sm font-medium gain-text">{saved}</p>}
+      </div>
+      <div className="bg-muted/40 border rounded-2xl p-4 text-sm text-muted-foreground">
+        <p className="font-semibold text-foreground mb-1">📅 NSE Trading Schedule (Default)</p>
+        <ul className="space-y-1 text-xs">
+          <li>• Pre-market: 9:00 AM – 9:15 AM IST</li>
+          <li>• Market Hours: 9:15 AM – 3:30 PM IST (Mon–Fri)</li>
+          <li>• Closed: Weekends & national holidays</li>
+          <li>• Muhurat Trading: Special Diwali session</li>
+        </ul>
+      </div>
     </div>
   );
 }

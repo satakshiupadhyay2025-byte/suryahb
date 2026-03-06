@@ -19,7 +19,7 @@ export default function StockDetailPage() {
   const isGain = stock.changePercent >= 0;
 
   return (
-    <div className="container mx-auto px-4 py-6 pb-24 lg:pb-6 animate-fade-in">
+    <div className="container mx-auto px-2 sm:px-4 py-4 pb-24 lg:pb-6 animate-fade-in max-w-screen-xl overflow-x-hidden">
       <Link to="/stocks" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"><ArrowLeft className="w-4 h-4" /> Back to Stocks</Link>
 
       <div className="flex items-start justify-between mb-4 flex-wrap gap-3">
@@ -47,7 +47,7 @@ export default function StockDetailPage() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 w-full min-w-0">
         <div className="lg:col-span-2 space-y-4">
           <TradingChart symbol={stock.symbol} basePrice={stock.price} height={320} />
 
