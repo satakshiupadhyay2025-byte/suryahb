@@ -32,13 +32,6 @@ export default function LoginPage() {
     }
   };
 
-  const handleDemo = async () => {
-    setLoading(true);
-    await new Promise(r => setTimeout(r, 400));
-    login('rahul@example.com', 'password123');
-    setLoading(false);
-    navigate('/');
-  };
 
   return (
     <div className="min-h-screen flex">
@@ -112,15 +105,6 @@ export default function LoginPage() {
               {loading ? 'Logging in...' : 'Login'}
             </Button>
           </form>
-
-          <div className="relative my-6">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t" /></div>
-            <div className="relative flex justify-center"><span className="bg-background px-3 text-sm text-muted-foreground">or</span></div>
-          </div>
-
-          <Button variant="outline" className="w-full" onClick={handleDemo} disabled={loading}>
-            🚀 Try Demo Account
-          </Button>
 
           <p className="text-center text-sm text-muted-foreground mt-6">
             Don't have an account? <Link to="/signup" className="text-primary font-semibold hover:underline">Sign Up</Link>
